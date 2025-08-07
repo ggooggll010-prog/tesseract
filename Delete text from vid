@@ -1,0 +1,57 @@
+import cv2
+import numpy as np
+from moviepy.editor import VideoFileClip, AudioFileClip
+import pytesseract
+import os
+
+# المسار إلى الفيديو الأصلي
+input_video = "your_video.mp4"
+
+# إعداد مجلد مؤقت
+os.makedirs("frames_cleaned", exist_ok=True)
+
+# تحميل الفيديو باستخدام moviepy
+clip = VideoFileClip(input_video)
+fps = clip.fps
+audio = clip.audio
+duration = clip.duration
+
+# معالجة الإطارات باستخدام OpenCV
+cap = cv2.VideoCapture(input_video)
+frame_num = 0
+success, frame = cap.read()
+
+while success:
+    # استخلاص النصوص
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    d = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
+
+    for i in range(len(d['text'])):
+        if int(d['conf'][i]) > 60:  # ثقة التعرف بالنص
+            (x, y, w, h) = (d['left'][i], d['top'][i], d['width'][i], d['height'][i])
+            # إزالة النص عبر inpainting
+            frame[y:y+h, x:x+w] = cv2.inpaint(frame[y:y+h, x:x+w], np.ones((h, w), np.uint8)*255, 3, cv2.INPAINT_TELEA)
+
+    # حفظ الإطار المعدل
+    frame_path = f"frames_cleaned/frame_{frame_num:05d}.png"
+    cv2.imwrite(frame_path, frame)
+    frame_num += 1
+    success, frame = cap.read()
+
+cap.release()
+
+# إعادة تركيب الفيديو
+img_array = []
+for i in range(frame_num):
+    img = cv2.imread(f"frames_cleaned/frame_{i:05d}.png")
+    height, width, _ = img.shape
+    img_array.append(img)
+
+out = cv2.VideoWriter("video_cleaned_no_text.mp4", cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+for img in img_array:
+    out.write(img)
+out.release()
+
+# دمج الصوت الأصلي
+final_clip = VideoFileClip("video_cleaned_no_text.mp4").set_audio(audio)
+final_clip.write_videofile("final_output.mp4", codec="libx264", audio_codec="aac")
